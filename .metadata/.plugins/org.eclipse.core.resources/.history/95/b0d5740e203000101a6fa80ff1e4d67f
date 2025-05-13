@@ -1,0 +1,69 @@
+package com.ecommerce.dao;
+
+import com.ecommerce.model.Product;
+import java.sql.*;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap; // For thread safety
+
+public class ProductDAO {
+    private static final String DB_URL = "jdbc:mysql://localhost:3306/EcommerceData";
+    private static final String DB_USER = "root";
+    private static final String DB_PASSWORD = "Mysql@123";
+
+    // Cache products in a Map for O(1) lookups
+    private final Map<Integer, Product> productCache = new ConcurrentHashMap<>();
+
+    public List<Product> getAllProducts() throws SQLException {
+        String sql = "SELECT id, name, price, stock_quantity, description FROM products";
+        List<Product> products = new ArrayList<>();
+
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+
+            while (rs.next()) {
+                Product product = new Product(
+                    rs.getInt("id"),
+                    rs.getString("name"),
+                    rs.getDouble("price"),
+                    rs.getInt("stock_quantity"),
+                    rs.getString("description")
+                );
+                products.add(product);
+                productCache.put(product.getId(), product); // Cache the product
+            }
+        }
+        return products;
+    }
+
+    public Product getProductById(int id) throws SQLException {
+        // Check cache first
+        if (productCache.containsKey(id)) {
+            return productCache.get(id);
+        }
+
+        // If not in cache, fetch from DB
+        String sql = "SELECT id, name, price, stock_quantity, description FROM products WHERE id = ?";
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+
+            stmt.setInt(1, id);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    Product product = new Product(
+                        rs.getInt("id"),
+                        rs.getString("name"),
+                        rs.getDouble("price"),
+                        rs.getInt("stock_quantity"),
+                        rs.getString("description")
+                    );
+                    productCache.put(id, product); // Cache the product
+                    return product;
+                }
+            }
+        }
+        throw new SQLException("Product not found");
+    }
+
+    // ... (rest of your existing methods)
+}

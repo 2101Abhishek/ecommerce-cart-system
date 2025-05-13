@@ -1,0 +1,85 @@
+package com.ecommerce.dao;
+
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.List;
+
+import com.ecommerce.exception.DatabaseException;
+import com.ecommerce.model.CartItem;
+
+public class OrderDAO {
+    private static final String CREATE_ORDER_SQL = "INSERT INTO orders (total_amount) VALUES (?)";
+    private static final String CREATE_ORDER_ITEM_SQL = 
+        "INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)";
+    
+    public int createOrder(List<CartItem> items) throws SQLException {
+        String orderSql = "INSERT INTO orders (total_amount, customer_name) VALUES (?, ?)";
+        String itemSql = "INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)";
+        String snapshotSql = "INSERT INTO order_cart_snapshots (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)";
+        
+        try (Connection conn = DBConnection.getConnection()) {
+            conn.setAutoCommit(false);
+            
+            // 1. Create order header
+            int orderId = createOrderHeader(conn, orderSql, calculateTotal(items));
+            
+            // 2. Create order items
+            createOrderRecords(conn, itemSql, orderId, items);
+            
+            // 3. Save cart snapshot
+            createOrderRecords(conn, snapshotSql, orderId, items);
+            
+            conn.commit();
+            return orderId;
+        }
+    }
+
+    private int createOrderHeader(Connection conn, String sql, double total) throws SQLException {
+        try (PreparedStatement stmt = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+            stmt.setDouble(1, total);
+            stmt.setString(2, "Current User"); // Replace with actual user
+            stmt.executeUpdate();
+            
+            try (ResultSet rs = stmt.getGeneratedKeys()) {
+                if (rs.next()) return rs.getInt(1);
+                throw new SQLException("Failed to get order ID");
+            }
+        }
+    }
+
+    private void createOrderRecords(Connection conn, String sql, int orderId, List<CartItem> items) throws SQLException {
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+            for (CartItem item : items) {
+                stmt.setInt(1, orderId);
+                stmt.setInt(2, item.getProduct().getId());
+                stmt.setInt(3, item.getQuantity());
+                stmt.setDouble(4, item.getProduct().getPrice());
+                stmt.addBatch();
+            }
+            stmt.executeBatch();
+        }
+    }
+
+    private void createOrderItems(Connection conn, int orderId, List<CartItem> items) 
+            throws SQLException {
+        try (PreparedStatement stmt = conn.prepareStatement(CREATE_ORDER_ITEM_SQL)) {
+            for (CartItem item : items) {
+                stmt.setInt(1, orderId);
+                stmt.setInt(2, item.getProduct().getId());
+                stmt.setInt(3, item.getQuantity());
+                stmt.setDouble(4, item.getProduct().getPrice());
+                stmt.addBatch();
+            }
+            stmt.executeBatch();
+        }
+    }
+
+    private double calculateTotal(List<CartItem> items) {
+        return items.stream()
+                   .mapToDouble(item -> item.getQuantity() * item.getProduct().getPrice())
+                   .sum();
+    }
+}

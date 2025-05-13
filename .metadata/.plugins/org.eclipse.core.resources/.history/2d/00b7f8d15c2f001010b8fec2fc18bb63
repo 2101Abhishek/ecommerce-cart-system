@@ -1,0 +1,321 @@
+package com.ecommerce.main;
+
+import com.ecommerce.dao.OrderDAO;
+import com.ecommerce.dao.ProductDAO;
+import com.ecommerce.exception.OutOfStockException;
+import com.ecommerce.exception.ProductNotFoundException;
+import com.ecommerce.model.CartItem;
+import com.ecommerce.model.Product;
+import com.ecommerce.service.CartService;
+import java.sql.SQLException;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.List;
+import java.util.Scanner;
+
+public class ECommerceApp {
+    private static final CartService cartService = new CartService();
+    private static final ProductDAO productDAO = new ProductDAO();
+    private static final Scanner scanner = new Scanner(System.in);
+    
+    public static void main(String[] args) {
+        boolean running = true;
+        
+        while (running) {
+            printMenu();
+            int choice = getUserChoice();
+            
+            try {
+                running = handleUserChoice(choice);
+            } catch (Exception e) {
+                System.out.println("Error: " + e.getMessage());
+            }
+        }
+        scanner.close();
+    }
+    
+    private static void printMenu() {
+        System.out.println("\n=== E-Commerce Cart System ===");
+        System.out.println("1. View Products");
+        System.out.println("2. Add Product to Cart");
+        System.out.println("3. View Cart");
+        System.out.println("4. Remove Product from Cart");
+        System.out.println("5. Update Product Quantity");
+        System.out.println("6. View Stock Levels");
+        System.out.println("7. Checkout");
+        System.out.println("8. Exit");
+        System.out.print("Enter your choice: ");
+    }
+    
+    private static int getUserChoice() {
+        while (!scanner.hasNextInt()) {
+            System.out.println("Please enter a number between 1-8");
+            scanner.next();
+        }
+        int choice = scanner.nextInt();
+        scanner.nextLine(); // Consume newline
+        return choice;
+    }
+    
+    private static boolean handleUserChoice(int choice) throws SQLException, ProductNotFoundException, OutOfStockException {
+        switch (choice) {
+            case 1:
+                viewProducts();
+                return true;
+            case 2:
+                addToCart();
+                return true;
+            case 3:
+                viewCart();
+                return true;
+            case 4:
+                removeFromCart();
+                return true;
+            case 5:
+                updateQuantity();
+                return true;
+            case 6:
+                viewStockLevels();
+                return true;
+            case 7:
+                checkout();
+                return false;
+            case 8:
+                System.out.println("Thank you for visiting!");
+                return false;
+            default:
+                System.out.println("Invalid choice. Please try again.");
+                return true;
+        }
+    }
+    
+    private static void viewProducts() throws SQLException {
+        System.out.println("\n=== Available Products ===");
+        List<Product> products = productDAO.getAllProducts();
+        if (products.isEmpty()) {
+            System.out.println("No products available.");
+            return;
+        }
+        
+        products.forEach(product -> System.out.printf(
+            "ID: %d, Name: %s, Price: %s, Description: %s\n",
+            product.getId(),
+            product.getName(),
+            formatPrice(product.getPrice()),
+            product.getDescription()
+        ));
+    }
+    
+    private static void addToCart() throws ProductNotFoundException, OutOfStockException {
+        System.out.print("Enter Product ID: ");
+        int productId = scanner.nextInt();
+        System.out.print("Enter Quantity: ");
+        int quantity = scanner.nextInt();
+        scanner.nextLine(); // Consume newline
+        
+        cartService.addToCart(productId, quantity);
+        System.out.println("Product added to cart successfully!");
+    }
+    
+    private static void viewCart() {
+        System.out.println("\n=== Your Shopping Cart ===");
+        List<CartItem> items = cartService.getCartItems();
+        
+        if (items.isEmpty()) {
+            System.out.println("Your cart is empty.");
+            return;
+        }
+        
+        items.forEach(item -> System.out.printf(
+            "%s - Quantity: %d - Total: %s\n",
+            item.getProduct().getName(),
+            item.getQuantity(),
+            formatPrice(item.getTotalPrice())
+        ));
+        
+        System.out.printf("\nTotal Price: %s\n", formatPrice(cartService.calculateTotalPrice()));
+    }
+    
+    private static void removeFromCart() {
+        System.out.print("Enter Product ID to remove: ");
+        int productId = scanner.nextInt();
+        scanner.nextLine(); // Consume newline
+        cartService.removeFromCart(productId);
+        System.out.println("Product removed from cart successfully!");
+    }
+    
+    private static void updateQuantity() throws ProductNotFoundException, OutOfStockException {
+        System.out.print("Enter Product ID: ");
+        int productId = scanner.nextInt();
+        System.out.print("Enter New Quantity: ");
+        int quantity = scanner.nextInt();
+        scanner.nextLine(); // Consume newline
+        cartService.updateQuantity(productId, quantity);
+        System.out.println("Quantity updated successfully!");
+    }
+    
+    private static void viewStockLevels() throws SQLException {
+        System.out.println("\n=== Current Stock Levels ===");
+        List<Product> products = productDAO.getAllProducts();
+        products.forEach(product -> {
+            try {
+                int stock = productDAO.getStockQuantity(product.getId());
+                System.out.printf("%s (ID: %d): %d available\n", 
+                    product.getName(), product.getId(), stock);
+            } catch (SQLException e) {
+                System.out.println("Error getting stock for product " + product.getId());
+            }
+        });
+    }
+    
+    private static void checkout() {
+        if (cartService.getCartItems().isEmpty()) {
+            System.out.println("Your cart is empty. Nothing to checkout.");
+            return;
+        }
+
+        // Initialize customer information
+        String[] customerInfo = new String[4]; // name, email, phone, address
+        boolean informationCorrect = false;
+
+        // First collection of information
+        customerInfo = collectCustomerInfo();
+
+        while (!informationCorrect) {
+            // Verify details
+            System.out.println("\nPlease verify your information:");
+            System.out.println("1. Name: " + customerInfo[0]);
+            System.out.println("2. Email: " + customerInfo[1]);
+            System.out.println("3. Phone: " + customerInfo[2]);
+            System.out.println("4. Address: " + customerInfo[3]);
+            System.out.print("Is this correct? (Y/N/Edit option number): ");
+            String confirmation = scanner.nextLine();
+
+            if (confirmation.equalsIgnoreCase("Y")) {
+                informationCorrect = true;
+            } else if (confirmation.matches("[1-4]")) {
+                int fieldToEdit = Integer.parseInt(confirmation);
+                editSpecificField(customerInfo, fieldToEdit);
+            } else {
+                System.out.println("\nLet's edit your information...");
+                customerInfo = collectCustomerInfo();
+            }
+        }
+
+        // Process the order
+        processOrder(customerInfo);
+    }
+
+    private static String[] collectCustomerInfo() {
+        String[] info = new String[4];
+        System.out.println("\n=== Enter Your Details ===");
+        System.out.print("Full Name: ");
+        info[0] = scanner.nextLine();
+        
+        System.out.print("Email Address: ");
+        info[1] = scanner.nextLine();
+        
+        info[2] = getValidPhoneNumber();
+        
+        System.out.print("Shipping Address: ");
+        info[3] = scanner.nextLine();
+        
+        return info;
+    }
+
+    private static void editSpecificField(String[] customerInfo, int fieldNumber) {
+        switch (fieldNumber) {
+            case 1:
+                System.out.print("Enter new name: ");
+                customerInfo[0] = scanner.nextLine();
+                break;
+            case 2:
+                System.out.print("Enter new email: ");
+                customerInfo[1] = scanner.nextLine();
+                break;
+            case 3:
+                customerInfo[2] = getValidPhoneNumber();
+                break;
+            case 4:
+                System.out.print("Enter new address: ");
+                customerInfo[3] = scanner.nextLine();
+                break;
+        }
+        System.out.println("Field updated successfully!");
+    }
+
+    private static void processOrder(String[] customerInfo) {
+        // Print receipt
+        printReceipt();
+
+        try {
+            OrderDAO orderDAO = new OrderDAO();
+            int orderId = orderDAO.createOrder(
+                cartService.getCartItems(),
+                customerInfo[0], // name
+                customerInfo[1], // email
+                customerInfo[2], // phone
+                customerInfo[3]  // address
+            );
+
+            // Update inventory
+            for (CartItem item : cartService.getCartItems()) {
+                productDAO.decreaseStockQuantity(item.getProduct().getId(), item.getQuantity());
+            }
+
+            orderDAO.updateOrderStatus(orderId, "paid");
+            System.out.println("\nThank you for your purchase, " + customerInfo[0] + "!");
+            System.out.println("Order ID: " + orderId);
+            System.out.println("Confirmation will be sent to: " + customerInfo[1]);
+            cartService.clearCart();
+
+        } catch (Exception e) {
+            System.out.println("\nError during checkout: " + e.getMessage());
+            System.out.println("Your order was not completed. Please try again.");
+        }
+    }
+
+    private static String getValidPhoneNumber() {
+        while (true) {
+            System.out.print("Phone Number (10 digits): ");
+            String phone = scanner.nextLine();
+            if (phone.matches("\\d{10}")) {
+                return phone;
+            }
+            System.out.println("Invalid phone number! Please enter exactly 10 digits.");
+        }
+    }
+
+    private static void printReceipt() {
+        List<CartItem> items = cartService.getCartItems();
+        double subtotal = cartService.calculateTotalPrice();
+        double tax = subtotal * 0.18;
+        double total = subtotal + tax;
+        
+        System.out.println("\n========= ORDER RECEIPT =========");
+        System.out.println("----------------------------------------");
+        System.out.printf("%-20s %6s %12s\n", "ITEM", "QTY", "PRICE");
+        System.out.println("----------------------------------------");
+        
+        items.forEach(item -> System.out.printf(
+            "%-20s %6d %12s\n", 
+            item.getProduct().getName(),
+            item.getQuantity(),
+            formatPrice(item.getTotalPrice())
+        ));
+        
+        System.out.println("----------------------------------------");
+        System.out.printf("%-20s %18s\n", "SUBTOTAL:", formatPrice(subtotal));
+        System.out.printf("%-20s %18s\n", "GST (18%):", formatPrice(tax));
+        System.out.println("----------------------------------------");
+        System.out.printf("%-20s %18s\n", "TOTAL:", formatPrice(total));
+        System.out.println("========================================");
+        System.out.println("Order Date: " + LocalDateTime.now().format(
+            DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm:ss")));
+        System.out.println("========================================");
+    }
+    
+    private static String formatPrice(double price) {
+        return String.format("₹%,.2f", price);
+    }
+}

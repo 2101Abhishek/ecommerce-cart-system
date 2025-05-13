@@ -1,0 +1,153 @@
+package com.ecommerce.dao;
+
+import com.ecommerce.exception.OutOfStockException;
+import com.ecommerce.exception.ProductNotFoundException;
+import com.ecommerce.model.Product;
+import java.sql.*;
+import java.util.ArrayList;
+import java.util.List;
+
+public class ProductDAO {
+    private static final String DB_URL = "jdbc:mysql://localhost:3306/ecommerce";
+    private static final String DB_USER = "your_username";
+    private static final String DB_PASSWORD = "your_password";
+
+    public List<Product> getAllProducts() throws SQLException {
+        List<Product> products = new ArrayList<>();
+        String sql = "SELECT id, name, price, description, stock_quantity FROM products";
+
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+
+            while (rs.next()) {
+                Product product = new Product(
+                    rs.getInt("id"),
+                    rs.getString("name"),
+                    rs.getDouble("price"),
+                    rs.getString("description")
+                );
+                products.add(product);
+            }
+        }
+        return products;
+    }
+
+    public int getStockQuantity(int productId) throws SQLException {
+        String sql = "SELECT stock_quantity FROM products WHERE id = ?";
+        
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            
+            stmt.setInt(1, productId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getInt("stock_quantity");
+                }
+            }
+        }
+        return 0;
+    }
+
+    public Product getProductById(int productId) throws SQLException, ProductNotFoundException {
+        String sql = "SELECT id, name, price, description FROM products WHERE id = ?";
+        
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            
+            stmt.setInt(1, productId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    return new Product(
+                        rs.getInt("id"),
+                        rs.getString("name"),
+                        rs.getDouble("price"),
+                        rs.getString("description")
+                    );
+                }
+            }
+        }
+        throw new ProductNotFoundException("Product with ID " + productId + " not found");
+    }
+
+    public void updateStockQuantity(int productId, int newQuantity) throws SQLException {
+        String sql = "UPDATE products SET stock_quantity = ? WHERE id = ?";
+        
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            
+            stmt.setInt(1, newQuantity);
+            stmt.setInt(2, productId);
+            stmt.executeUpdate();
+        }
+    }
+
+    public void decreaseStockQuantity(int productId, int quantityToDecrease) 
+            throws SQLException, OutOfStockException, ProductNotFoundException {
+        
+        Connection conn = null;
+        try {
+            conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+            conn.setAutoCommit(false); // Start transaction
+
+            // Check current stock
+            String checkSql = "SELECT stock_quantity FROM products WHERE id = ? FOR UPDATE";
+            try (PreparedStatement checkStmt = conn.prepareStatement(checkSql)) {
+                checkStmt.setInt(1, productId);
+                try (ResultSet rs = checkStmt.executeQuery()) {
+                    if (rs.next()) {
+                        int currentStock = rs.getInt("stock_quantity");
+                        if (currentStock < quantityToDecrease) {
+                            conn.rollback();
+                            throw new OutOfStockException("Not enough stock available");
+                        }
+                    } else {
+                        conn.rollback();
+                        throw new ProductNotFoundException("Product not found");
+                    }
+                }
+            }
+
+            // Update stock
+            String updateSql = "UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ?";
+            try (PreparedStatement updateStmt = conn.prepareStatement(updateSql)) {
+                updateStmt.setInt(1, quantityToDecrease);
+                updateStmt.setInt(2, productId);
+                updateStmt.executeUpdate();
+            }
+
+            conn.commit(); // Commit transaction
+        } catch (SQLException e) {
+            if (conn != null) {
+                conn.rollback();
+            }
+            throw e;
+        } finally {
+            if (conn != null) {
+                conn.setAutoCommit(true);
+                conn.close();
+            }
+        }
+    }
+
+    // Additional helpful methods
+    public void addProduct(Product product, int initialStock) throws SQLException {
+        String sql = "INSERT INTO products (name, price, description, stock_quantity) VALUES (?, ?, ?, ?)";
+        
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+             PreparedStatement stmt = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+            
+            stmt.setString(1, product.getName());
+            stmt.setDouble(2, product.getPrice());
+            stmt.setString(3, product.getDescription());
+            stmt.setInt(4, initialStock);
+            stmt.executeUpdate();
+            
+            try (ResultSet rs = stmt.getGeneratedKeys()) {
+                if (rs.next()) {
+                    product.setId(rs.getInt(1));
+                }
+            }
+        }
+    }
+}

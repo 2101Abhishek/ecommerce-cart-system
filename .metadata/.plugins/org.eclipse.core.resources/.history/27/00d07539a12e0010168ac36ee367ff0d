@@ -1,0 +1,41 @@
+public class OrderDAO {
+    public int createOrder(List<CartItem> items) throws SQLException {
+        String orderSql = "INSERT INTO orders (total_amount) VALUES (?)";
+        String itemSql = "INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)";
+        
+        try (Connection conn = DBConnection.getConnection()) {
+            conn.setAutoCommit(false); // Start transaction
+            
+            try (PreparedStatement orderStmt = conn.prepareStatement(
+                    orderSql, Statement.RETURN_GENERATED_KEYS)) {
+                double total = calculateTotal(items);
+                orderStmt.setDouble(1, total);
+                orderStmt.executeUpdate();
+                
+                ResultSet rs = orderStmt.getGeneratedKeys();
+                if (rs.next()) {
+                    int orderId = rs.getInt(1);
+                    
+                    // Insert order items
+                    try (PreparedStatement itemStmt = conn.prepareStatement(itemSql)) {
+                        for (CartItem item : items) {
+                            itemStmt.setInt(1, orderId);
+                            itemStmt.setInt(2, item.getProduct().getId());
+                            itemStmt.setInt(3, item.getQuantity());
+                            itemStmt.setDouble(4, item.getProduct().getPrice());
+                            itemStmt.addBatch();
+                        }
+                        itemStmt.executeBatch();
+                    }
+                    
+                    conn.commit(); // Commit transaction
+                    return orderId;
+                }
+            } catch (SQLException e) {
+                conn.rollback(); // Rollback on error
+                throw e;
+            }
+        }
+        return -1;
+    }
+}

@@ -1,0 +1,146 @@
+package com.ecommerce.service;
+
+import com.ecommerce.dao.ProductDAO;
+import com.ecommerce.exception.OutOfStockException;
+import com.ecommerce.exception.ProductNotFoundException;
+import com.ecommerce.model.CartItem;
+import com.ecommerce.model.Product;
+import java.sql.SQLException;
+import java.util.*;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.stream.Collectors;
+
+public class CartService {
+    // Thread-safe cart implementation
+    private final List<CartItem> cartItems = new CopyOnWriteArrayList<>();
+    private final ProductDAO productDAO;
+    
+    public CartService() {
+        this(new ProductDAO());
+    }
+    
+    public CartService(ProductDAO productDAO) {
+        this.productDAO = productDAO;
+    }
+
+    public void addToCart(int productId, int quantity) throws ProductNotFoundException, OutOfStockException {
+        try {
+            Product product = productDAO.getProductById(productId);
+            int availableStock = productDAO.getStockQuantity(productId);
+            int existingQuantity = getQuantityInCart(productId);
+            
+            if (availableStock < quantity) {
+                throw new OutOfStockException("Only " + availableStock + " items available");
+            }
+            
+            if (existingQuantity > 0 && (availableStock < existingQuantity + quantity)) {
+                throw new OutOfStockException("Can't add " + quantity + " more. Only " + 
+                    (availableStock - existingQuantity) + " left");
+            }
+            
+            updateOrAddItem(productId, quantity, product);
+        } catch (SQLException e) {
+            throw new ProductNotFoundException("Database error: " + e.getMessage());
+        }
+    }
+
+    private int getQuantityInCart(int productId) {
+        return cartItems.stream()
+                .filter(item -> item.getProduct().getId() == productId)
+                .findFirst()
+                .map(CartItem::getQuantity)
+                .orElse(0);
+    }
+
+    private void updateOrAddItem(int productId, int quantity, Product product) {
+        Optional<CartItem> existingItem = cartItems.stream()
+                .filter(item -> item.getProduct().getId() == productId)
+                .findFirst();
+        
+        if (existingItem.isPresent()) {
+            existingItem.get().setQuantity(existingItem.get().getQuantity() + quantity);
+        } else {
+            cartItems.add(new CartItem(product, quantity));
+        }
+    }
+
+    public void removeFromCart(int productId) {
+        cartItems.removeIf(item -> item.getProduct().getId() == productId);
+    }
+
+    public void updateQuantity(int productId, int newQuantity) throws ProductNotFoundException, OutOfStockException {
+        if (newQuantity <= 0) {
+            removeFromCart(productId);
+            return;
+        }
+
+        try {
+            int availableStock = productDAO.getStockQuantity(productId);
+            if (availableStock < newQuantity) {
+                throw new OutOfStockException("Only " + availableStock + " items available");
+            }
+
+            boolean updated = false;
+            for (CartItem item : cartItems) {
+                if (item.getProduct().getId() == productId) {
+                    item.setQuantity(newQuantity);
+                    updated = true;
+                    break;
+                }
+            }
+
+            if (!updated) {
+                throw new ProductNotFoundException("Product not in cart");
+            }
+
+        } catch (SQLException e) {
+            throw new ProductNotFoundException("Database error: " + e.getMessage());
+        }
+    }
+
+
+    public void validateCartStock() throws OutOfStockException, SQLException {
+        Map<Integer, Integer> productQuantities = new HashMap<>();
+        
+        for (CartItem item : cartItems) {
+            int productId = item.getProduct().getId();
+            int requested = item.getQuantity();
+            int available = productDAO.getStockQuantity(productId);
+            
+            if (available < requested) {
+                throw new OutOfStockException(
+                    "Insufficient stock for " + item.getProduct().getName() + 
+                    " (Available: " + available + ", Requested: " + requested + ")");
+            }
+        }
+    }
+
+    public double calculateTotalPrice() {
+        return cartItems.stream()
+                .mapToDouble(CartItem::getTotalPrice)
+                .sum();
+    }
+
+    public List<CartItem> getExpensiveItems(double minPrice) {
+        return cartItems.stream()
+                .filter(item -> item.getTotalPrice() >= minPrice)
+                .collect(Collectors.toList());
+    }
+
+    public Map<Integer, Long> getProductCounts() {
+        return cartItems.stream()
+                .collect(Collectors.groupingBy(
+                    item -> item.getProduct().getId(),
+                    Collectors.summingLong(CartItem::getQuantity)
+                ));
+    }
+
+
+    public List<CartItem> getCartItems() {
+        return Collections.unmodifiableList(cartItems);
+    }
+
+    public void clearCart() {
+        cartItems.clear();
+    }
+}

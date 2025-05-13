@@ -1,0 +1,130 @@
+package com.ecommerce.service;
+
+import com.ecommerce.dao.ProductDAO;
+import com.ecommerce.exception.OutOfStockException;
+import com.ecommerce.exception.ProductNotFoundException;
+import com.ecommerce.model.CartItem;
+import com.ecommerce.model.Product;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+
+public class CartService {
+    private final List<CartItem> cartItems = new ArrayList<>();
+    private final ProductDAO productDAO;
+    
+    public CartService() {
+        this.productDAO = new ProductDAO();
+    }
+    
+    public CartService(ProductDAO productDAO) {
+        this.productDAO = productDAO;
+    }
+    
+    public void addToCart(int productId, int quantity) 
+            throws ProductNotFoundException, OutOfStockException {
+        try {
+            Product product = productDAO.getProductById(productId);
+            int availableStock = productDAO.getStockQuantity(productId);
+            int existingQuantity = getExistingQuantityInCart(productId);
+            
+            if (availableStock < quantity) {
+                throw new OutOfStockException("Only " + availableStock + " items available in stock");
+            }
+            
+            if (existingQuantity > 0 && (availableStock < existingQuantity + quantity)) {
+                throw new OutOfStockException("Cannot add " + quantity + " more. Only " + 
+                    (availableStock - existingQuantity) + " additional items available");
+            }
+            
+            updateCart(productId, quantity, product);
+            
+        } catch (SQLException e) {
+            throw new ProductNotFoundException("Database error: " + e.getMessage());
+        }
+    }
+    
+    private int getExistingQuantityInCart(int productId) {
+        return cartItems.stream()
+                .filter(item -> item.getProduct().getId() == productId)
+                .mapToInt(CartItem::getQuantity)
+                .findFirst()
+                .orElse(0);
+    }
+    
+    private void updateCart(int productId, int quantity, Product product) {
+        cartItems.stream()
+                .filter(item -> item.getProduct().getId() == productId)
+                .findFirst()
+                .ifPresentOrElse(
+                    item -> item.setQuantity(item.getQuantity() + quantity),
+                    () -> cartItems.add(new CartItem(product, quantity))
+                );
+    }
+    
+    public void removeFromCart(int productId) {
+        Iterator<CartItem> iterator = cartItems.iterator();
+        while (iterator.hasNext()) {
+            CartItem item = iterator.next();
+            if (item.getProduct().getId() == productId) {
+                iterator.remove();
+                return;
+            }
+        }
+    }
+    
+    public void updateQuantity(int productId, int newQuantity) 
+            throws ProductNotFoundException, OutOfStockException {
+        try {
+            if (newQuantity <= 0) {
+                removeFromCart(productId);
+                return;
+            }
+            
+            int availableStock = productDAO.getStockQuantity(productId);
+            if (availableStock < newQuantity) {
+                throw new OutOfStockException("Only " + availableStock + " items available in stock");
+            }
+            
+            boolean productFound = false;
+            for (CartItem item : cartItems) {
+                if (item.getProduct().getId() == productId) {
+                    item.setQuantity(newQuantity);
+                    productFound = true;
+                    break;
+                }
+            }
+            
+            if (!productFound) {
+                throw new ProductNotFoundException("Product not found in cart");
+            }
+        } catch (SQLException e) {
+            throw new ProductNotFoundException("Database error: " + e.getMessage());
+        }
+    }
+    public void validateCartStock() throws OutOfStockException, SQLException {
+        for (CartItem item : cartItems) {
+            int availableStock = productDAO.getStockQuantity(item.getProduct().getId());
+            if (availableStock < item.getQuantity()) {
+                throw new OutOfStockException(
+                    "Insufficient stock for product ID: " + item.getProduct().getId() + 
+                    ". Available: " + availableStock);
+            }
+        }
+    }
+    
+    public double calculateTotalPrice() {
+        return cartItems.stream()
+                .mapToDouble(CartItem::getTotalPrice)
+                .sum();
+    }
+    
+    public List<CartItem> getCartItems() {
+        return new ArrayList<>(cartItems);
+    }
+    
+    public void clearCart() {
+        cartItems.clear();
+    }
+}

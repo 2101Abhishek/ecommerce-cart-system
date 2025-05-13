@@ -1,0 +1,131 @@
+package com.ecommerce.main;
+
+import com.ecommerce.dao.ProductDAO;
+import com.ecommerce.exception.OutOfStockException;
+import com.ecommerce.exception.ProductNotFoundException;
+import com.ecommerce.model.CartItem;
+import com.ecommerce.model.Product;
+import com.ecommerce.service.CartService;
+import java.io.IOException;
+import java.util.List;
+import java.util.Scanner;
+
+public class ECommerceApp {
+    private static CartService cartService = new CartService();
+    private static ProductDAO productDAO = new ProductDAO();
+    private static Scanner scanner = new Scanner(System.in);
+    
+    public static void main(String[] args) {
+        boolean running = true;
+        
+        while (running) {
+            System.out.println("\n=== E-Commerce Cart System ===");
+            System.out.println("1. View Products");
+            System.out.println("2. Add Product to Cart");
+            System.out.println("3. View Cart");
+            System.out.println("4. Remove Product from Cart");
+            System.out.println("5. Update Product Quantity");
+            System.out.println("6. Checkout");
+            System.out.println("7. Exit");
+            System.out.print("Enter your choice: ");
+            
+            int choice = scanner.nextInt();
+            scanner.nextLine(); // Consume newline
+            
+            try {
+                switch (choice) {
+                    case 1:
+                        viewProducts();
+                        break;
+                    case 2:
+                        addToCart();
+                        break;
+                    case 3:
+                        viewCart();
+                        break;
+                    case 4:
+                        removeFromCart();
+                        break;
+                    case 5:
+                        updateQuantity();
+                        break;
+                    case 6:
+                        checkout();
+                        break;
+                    case 7:
+                        running = false;
+                        System.out.println("Thank you for shopping with us!");
+                        break;
+                    default:
+                        System.out.println("Invalid choice. Please try again.");
+                }
+            } catch (Exception e) {
+                System.out.println("Error: " + e.getMessage());
+            }
+        }
+    }
+    
+    private static void viewProducts() throws IOException {
+        System.out.println("\n=== Available Products ===");
+        List<Product> products = productDAO.getAllProducts();
+        for (Product product : products) {
+            System.out.println(product);
+        }
+    }
+    
+    private static void addToCart() throws IOException, ProductNotFoundException, OutOfStockException {
+        System.out.print("Enter Product ID: ");
+        int productId = scanner.nextInt();
+        System.out.print("Enter Quantity: ");
+        int quantity = scanner.nextInt();
+        
+        cartService.addToCart(productId, quantity);
+        System.out.println("Product added to cart successfully!");
+    }
+    
+    private static void viewCart() {
+        System.out.println("\n=== Your Shopping Cart ===");
+        if (cartService.getCartItems().isEmpty()) {
+            System.out.println("Your cart is empty.");
+            return;
+        }
+        
+        for (CartItem item : cartService.getCartItems()) {
+            System.out.printf("%s - Quantity: %d - Total: $%.2f\n",
+                    item.getProduct().getName(),
+                    item.getQuantity(),
+                    item.getTotalPrice());
+        }
+        
+        System.out.printf("\nTotal Price: $%.2f\n", cartService.calculateTotalPrice());
+    }
+    
+    private static void removeFromCart() {
+        System.out.print("Enter Product ID to remove: ");
+        int productId = scanner.nextInt();
+        
+        cartService.removeFromCart(productId);
+        System.out.println("Product removed from cart successfully!");
+    }
+    
+    private static void updateQuantity() throws IOException, ProductNotFoundException, OutOfStockException {
+        System.out.print("Enter Product ID: ");
+        int productId = scanner.nextInt();
+        System.out.print("Enter New Quantity: ");
+        int quantity = scanner.nextInt();
+        
+        cartService.updateQuantity(productId, quantity);
+        System.out.println("Quantity updated successfully!");
+    }
+    
+    private static void checkout() {
+        if (cartService.getCartItems().isEmpty()) {
+            System.out.println("Your cart is empty. Nothing to checkout.");
+            return;
+        }
+        
+        viewCart();
+        System.out.println("\nThank you for your purchase!");
+        cartService.clearCart();
+    }
+}

@@ -1,0 +1,111 @@
+package com.ecommerce.dao;
+
+import com.ecommerce.exception.OutOfStockException;
+import com.ecommerce.exception.ProductNotFoundException;
+import com.ecommerce.model.Product;
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.FileReader;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+
+public class ProductDAO {
+    private static final String PRODUCTS_FILE = "src/main/resources/database/products.txt";
+    private static final String INVENTORY_FILE = "src/main/resources/database/inventory.txt";
+    
+    public List<Product> getAllProducts() throws IOException {
+        List<Product> products = new ArrayList<>();
+        BufferedReader reader = new BufferedReader(new FileReader(PRODUCTS_FILE));
+        
+        // Skip header line
+        reader.readLine();
+        
+        String line;
+        while ((line = reader.readLine()) != null) {
+            String[] parts = line.split(",");
+            int id = Integer.parseInt(parts[0].trim());
+            String name = parts[1].trim();
+            double price = Double.parseDouble(parts[2].trim());
+            String description = parts.length > 3 ? parts[3].trim() : "";
+            
+            products.add(new Product(id, name, price, description));
+        }
+        reader.close();
+        return products;
+    }
+    
+    public int getStockQuantity(int productId) throws IOException {
+        BufferedReader reader = new BufferedReader(new FileReader(INVENTORY_FILE));
+        
+        // Skip header line
+        reader.readLine();
+        
+        String line;
+        while ((line = reader.readLine()) != null) {
+            String[] parts = line.split(",");
+            int currentId = Integer.parseInt(parts[0].trim());
+            if (currentId == productId) {
+                reader.close();
+                return Integer.parseInt(parts[1].trim());
+            }
+        }
+        reader.close();
+        return 0;
+    }
+    
+    public Product getProductById(int productId) throws IOException, ProductNotFoundException {
+        List<Product> products = getAllProducts();
+        for (Product product : products) {
+            if (product.getId() == productId) {
+                return product;
+            }
+        }
+        throw new ProductNotFoundException("Product with ID " + productId + " not found");
+    }
+    public void updateStockQuantity(int productId, int newQuantity) throws IOException {
+        // Read all inventory lines
+        List<String> lines = new ArrayList<>();
+        BufferedReader reader = new BufferedReader(new FileReader(INVENTORY_FILE));
+        
+        // Read header first
+        String header = reader.readLine();
+        lines.add(header);
+        
+        // Process remaining lines
+        String line;
+        boolean found = false;
+        while ((line = reader.readLine()) != null) {
+            String[] parts = line.split(",");
+            int currentId = Integer.parseInt(parts[0].trim());
+            if (currentId == productId) {
+                lines.add(productId + "," + newQuantity);
+                found = true;
+            } else {
+                lines.add(line);
+            }
+        }
+        reader.close();
+        
+        // If product not found in inventory, add it
+        if (!found) {
+            lines.add(productId + "," + newQuantity);
+        }
+        
+        // Write all lines back to file
+        BufferedWriter writer = new BufferedWriter(new FileWriter(INVENTORY_FILE));
+        for (String l : lines) {
+            writer.write(l);
+            writer.newLine();
+        }
+        writer.close();
+    }
+
+    public void decreaseStockQuantity(int productId, int quantityToDecrease) throws IOException, OutOfStockException {
+        int currentStock = getStockQuantity(productId);
+        if (currentStock < quantityToDecrease) {
+            throw new OutOfStockException("Not enough stock available");
+        }
+        updateStockQuantity(productId, currentStock - quantityToDecrease);
+    }
+}

@@ -1,0 +1,95 @@
+package com.ecommerce.dao;
+
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.List;
+
+import com.ecommerce.exception.DatabaseException;
+import com.ecommerce.model.CartItem;
+
+public class OrderDAO {
+    private static final String CREATE_ORDER_SQL = "INSERT INTO orders (total_amount) VALUES (?)";
+    private static final String CREATE_ORDER_ITEM_SQL = 
+        "INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)";
+    
+    public int createOrder(List<CartItem> items) throws DatabaseException {
+        if (items == null || items.isEmpty()) {
+            throw new IllegalArgumentException("Cart items cannot be null or empty");
+        }
+
+        Connection conn = null;
+        try {
+            conn = DBConnection.getConnection();
+            conn.setAutoCommit(false); // Start transaction
+            
+            // 1. Create the order header
+            int orderId = createOrderHeader(conn, calculateTotal(items));
+            
+            // 2. Create all order items
+            createOrderItems(conn, orderId, items);
+            
+            conn.commit(); // Commit transaction
+            return orderId;
+            
+        } catch (SQLException e) {
+            try {
+                if (conn != null) {
+                    conn.rollback(); // Rollback on error
+                }
+            } catch (SQLException ex) {
+                throw new DatabaseException("Failed to rollback transaction", ex);
+            }
+            throw new DatabaseException("Failed to create order", e);
+        } finally {
+            try {
+                if (conn != null) {
+                    conn.setAutoCommit(true); // Reset auto-commit
+                    conn.close();
+                }
+            } catch (SQLException e) {
+                // Log this error but don't throw as we want to preserve the original error if any
+                System.err.println("Error closing connection: " + e.getMessage());
+            }
+        }
+    }
+
+    private int createOrderHeader(Connection conn, double totalAmount) throws SQLException {
+        try (PreparedStatement stmt = conn.prepareStatement(
+                CREATE_ORDER_SQL, Statement.RETURN_GENERATED_KEYS)) {
+            
+            stmt.setDouble(1, totalAmount);
+            stmt.executeUpdate();
+            
+            try (ResultSet rs = stmt.getGeneratedKeys()) {
+                if (rs.next()) {
+                    return rs.getInt(1);
+                } else {
+                    throw new SQLException("Failed to get generated order ID");
+                }
+            }
+        }
+    }
+
+    private void createOrderItems(Connection conn, int orderId, List<CartItem> items) 
+            throws SQLException {
+        try (PreparedStatement stmt = conn.prepareStatement(CREATE_ORDER_ITEM_SQL)) {
+            for (CartItem item : items) {
+                stmt.setInt(1, orderId);
+                stmt.setInt(2, item.getProduct().getId());
+                stmt.setInt(3, item.getQuantity());
+                stmt.setDouble(4, item.getProduct().getPrice());
+                stmt.addBatch();
+            }
+            stmt.executeBatch();
+        }
+    }
+
+    private double calculateTotal(List<CartItem> items) {
+        return items.stream()
+                   .mapToDouble(item -> item.getQuantity() * item.getProduct().getPrice())
+                   .sum();
+    }
+}

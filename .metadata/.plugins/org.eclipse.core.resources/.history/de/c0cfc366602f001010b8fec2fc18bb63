@@ -1,0 +1,155 @@
+package com.ecommerce.dao;
+
+import com.ecommerce.model.CartItem;
+import java.sql.*;
+import java.util.List;
+
+public class OrderDAO {
+    private static final String DB_URL = "jdbc:mysql://localhost:3306/EcommerceData";
+    private static final String DB_USER = "root";
+    private static final String DB_PASSWORD = "Mysql@123";
+
+    public int createOrder(List<CartItem> items, String customerName, 
+                         String customerEmail, String customerPhone,
+                         String shippingAddress) throws SQLException {
+        
+        double total = calculateTotal(items);
+        double tax = total * 0.18;
+        double grandTotal = total + tax;
+
+        String orderSql = "INSERT INTO orders (customer_name, customer_email, " +
+                         "customer_phone, shipping_address, subtotal, " +
+                         "tax_amount, total_amount, status) " +
+                         "VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')";
+        
+        String itemSql = "INSERT INTO order_items (order_id, product_id, quantity, unit_price) " +
+                        "VALUES (?, ?, ?, ?)";
+        
+        String snapshotSql = "INSERT INTO order_cart_snapshots (order_id, cart_data) " +
+                           "VALUES (?, ?)";
+
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD)) {
+            conn.setAutoCommit(false);
+
+            try {
+                // 1. Create order header
+                int orderId = createOrderHeader(conn, orderSql, customerName, customerEmail,
+                                               customerPhone, shippingAddress, 
+                                               total, tax, grandTotal);
+                
+                // 2. Create order items
+                createOrderItems(conn, itemSql, orderId, items);
+                
+                // 3. Save cart snapshot (as JSON)
+                saveCartSnapshot(conn, snapshotSql, orderId, items);
+                
+                conn.commit();
+                return orderId;
+                
+            } catch (SQLException e) {
+                conn.rollback();
+                throw new SQLException("Order creation failed: " + e.getMessage(), e);
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        }
+    }
+
+    public void updateOrderStatus(int orderId, String status) throws SQLException {
+        if (!status.equals("paid") && !status.equals("failed")) {
+            throw new IllegalArgumentException("Invalid status. Must be 'paid' or 'failed'");
+        }
+        
+        String sql = "UPDATE orders SET status = ? WHERE id = ?";
+        
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            
+            stmt.setString(1, status);
+            stmt.setInt(2, orderId);
+            
+            int rowsAffected = stmt.executeUpdate();
+            if (rowsAffected == 0) {
+                throw new SQLException("No order found with ID: " + orderId);
+            }
+        }
+    }
+
+    private int createOrderHeader(Connection conn, String sql, String customerName,
+                                String customerEmail, String customerPhone,
+                                String shippingAddress, double subtotal,
+                                double tax, double total) throws SQLException {
+        
+        try (PreparedStatement stmt = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+            
+            stmt.setString(1, customerName);
+            stmt.setString(2, customerEmail);
+            stmt.setString(3, customerPhone);
+            stmt.setString(4, shippingAddress);
+            stmt.setDouble(5, subtotal);
+            stmt.setDouble(6, tax);
+            stmt.setDouble(7, total);
+            
+            stmt.executeUpdate();
+            
+            try (ResultSet rs = stmt.getGeneratedKeys()) {
+                if (rs.next()) {
+                    return rs.getInt(1);
+                }
+                throw new SQLException("Failed to get generated order ID");
+            }
+        }
+    }
+
+    private void createOrderItems(Connection conn, String sql, int orderId,
+                                List<CartItem> items) throws SQLException {
+        
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+            for (CartItem item : items) {
+                stmt.setInt(1, orderId);
+                stmt.setInt(2, item.getProduct().getId());
+                stmt.setInt(3, item.getQuantity());
+                stmt.setDouble(4, item.getProduct().getPrice());
+                stmt.addBatch();
+            }
+            stmt.executeBatch();
+        }
+    }
+
+    private void saveCartSnapshot(Connection conn, String sql, int orderId,
+                                List<CartItem> items) throws SQLException {
+        
+        String cartJson = convertCartToJson(items);
+        
+        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+            stmt.setInt(1, orderId);
+            stmt.setString(2, cartJson);
+            stmt.executeUpdate();
+        }
+    }
+
+    private String convertCartToJson(List<CartItem> items) {
+        // Simple JSON conversion (you can use a library like Gson for more complex cases)
+        StringBuilder json = new StringBuilder("[");
+        for (CartItem item : items) {
+            json.append(String.format(
+                "{\"productId\":%d,\"name\":\"%s\",\"quantity\":%d,\"price\":%.2f},",
+                item.getProduct().getId(),
+                item.getProduct().getName().replace("\"", "\\\""),
+                item.getQuantity(),
+                item.getProduct().getPrice()
+            ));
+        }
+        if (json.charAt(json.length()-1) == ',') {
+            json.deleteCharAt(json.length()-1);
+        }
+        json.append("]");
+        return json.toString();
+    }
+
+    private double calculateTotal(List<CartItem> items) {
+        return items.stream()
+                   .mapToDouble(item -> item.getQuantity() * item.getProduct().getPrice())
+                   .sum();
+    }
+}

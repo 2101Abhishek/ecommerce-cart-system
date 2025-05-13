@@ -1,0 +1,105 @@
+package com.ecommerce.dao;
+
+import com.ecommerce.model.CartItem;
+import java.sql.*;
+import java.util.List;
+
+public class OrderDAO {
+    private static final String DB_URL = "jdbc:mysql://localhost:3306/EcommerceData";
+    private static final String DB_USER = "root";
+    private static final String DB_PASSWORD = "Mysql@123";
+
+    public int createOrder(List<CartItem> items, String customerName, 
+                         String customerEmail, String customerPhone,
+                         String shippingAddress) throws SQLException {
+        
+        String orderSql = "INSERT INTO orders (total_amount, customer_name, " +
+                         "customer_email, customer_phone, shipping_address, " +
+                         "status, payment_status) " +
+                         "VALUES (?, ?, ?, ?, ?, 'pending', 'pending')";
+        
+        // Corrected to use 'price' instead of 'unit_price'
+        String itemSql = "INSERT INTO order_items (order_id, product_id, quantity, price) " +
+                       "VALUES (?, ?, ?, ?)";
+
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD)) {
+            conn.setAutoCommit(false);
+
+            try {
+                // 1. Create order header
+                int orderId;
+                try (PreparedStatement stmt = conn.prepareStatement(orderSql, Statement.RETURN_GENERATED_KEYS)) {
+                    stmt.setDouble(1, calculateTotal(items));
+                    stmt.setString(2, customerName);
+                    stmt.setString(3, customerEmail);
+                    stmt.setString(4, customerPhone);
+                    stmt.setString(5, shippingAddress);
+                    stmt.executeUpdate();
+                    
+                    try (ResultSet rs = stmt.getGeneratedKeys()) {
+                        if (rs.next()) {
+                            orderId = rs.getInt(1);
+                        } else {
+                            throw new SQLException("Failed to get generated order ID");
+                        }
+                    }
+                }
+                
+                // 2. Create order items (using 'price' column)
+                try (PreparedStatement stmt = conn.prepareStatement(itemSql)) {
+                    for (CartItem item : items) {
+                        stmt.setInt(1, orderId);
+                        stmt.setInt(2, item.getProduct().getId());
+                        stmt.setInt(3, item.getQuantity());
+                        stmt.setDouble(4, item.getProduct().getPrice());
+                        stmt.addBatch();
+                    }
+                    stmt.executeBatch();
+                }
+                
+                conn.commit();
+                return orderId;
+                
+            } catch (SQLException e) {
+                conn.rollback();
+                throw new SQLException("Order creation failed: " + e.getMessage(), e);
+            } finally {
+                conn.setAutoCommit(true);
+            }
+        }
+    }
+
+    public void updateOrderStatus(int orderId, String orderStatus, String paymentStatus) throws SQLException {
+        validateStatus(orderStatus, paymentStatus);
+        
+        String sql = "UPDATE orders SET status = ?, payment_status = ? WHERE id = ?";
+        
+        try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            
+            stmt.setString(1, orderStatus);
+            stmt.setString(2, paymentStatus);
+            stmt.setInt(3, orderId);
+            
+            int rowsAffected = stmt.executeUpdate();
+            if (rowsAffected == 0) {
+                throw new SQLException("No order found with ID: " + orderId);
+            }
+        }
+    }
+
+    private void validateStatus(String orderStatus, String paymentStatus) {
+        if (!List.of("pending", "processing", "shipped", "delivered", "cancelled").contains(orderStatus)) {
+            throw new IllegalArgumentException("Invalid order status: " + orderStatus);
+        }
+        if (!List.of("pending", "paid", "failed").contains(paymentStatus)) {
+            throw new IllegalArgumentException("Invalid payment status: " + paymentStatus);
+        }
+    }
+
+    private double calculateTotal(List<CartItem> items) {
+        return items.stream()
+                   .mapToDouble(item -> item.getQuantity() * item.getProduct().getPrice())
+                   .sum();
+    }
+}

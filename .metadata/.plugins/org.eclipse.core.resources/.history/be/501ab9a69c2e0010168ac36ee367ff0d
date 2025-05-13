@@ -1,0 +1,88 @@
+package com.ecommerce.service;
+
+import com.ecommerce.dao.ProductDAO;
+import com.ecommerce.exception.OutOfStockException;
+import com.ecommerce.exception.ProductNotFoundException;
+import com.ecommerce.model.CartItem;
+import com.ecommerce.model.Product;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+
+public class CartService {
+    private List<CartItem> cartItems = new ArrayList<>();
+    private ProductDAO productDAO = new ProductDAO();
+    
+    public void addToCart(int productId, int quantity) 
+            throws ProductNotFoundException, OutOfStockException, IOException {
+        
+        int availableStock = productDAO.getStockQuantity(productId);
+        if (availableStock < quantity) {
+            throw new OutOfStockException("Only " + availableStock + " items available in stock");
+        }
+        
+        Product product = productDAO.getProductById(productId);
+        
+        // Check if product already in cart
+        for (CartItem item : cartItems) {
+            if (item.getProduct().getId() == productId) {
+                item.setQuantity(item.getQuantity() + quantity);
+                return;
+            }
+        }
+        
+        // If not in cart, add new item
+        cartItems.add(new CartItem(product, quantity));
+    }
+    
+    public void removeFromCart(int productId) {
+        Iterator<CartItem> iterator = cartItems.iterator();
+        while (iterator.hasNext()) {
+            CartItem item = iterator.next();
+            if (item.getProduct().getId() == productId) {
+                iterator.remove();
+                return;
+            }
+        }
+    }
+    
+    public void updateQuantity(int productId, int newQuantity) 
+            throws ProductNotFoundException, OutOfStockException, IOException {
+        
+        if (newQuantity <= 0) {
+            removeFromCart(productId);
+            return;
+        }
+        
+        int availableStock = productDAO.getStockQuantity(productId);
+        if (availableStock < newQuantity) {
+            throw new OutOfStockException("Only " + availableStock + " items available in stock");
+        }
+        
+        for (CartItem item : cartItems) {
+            if (item.getProduct().getId() == productId) {
+                item.setQuantity(newQuantity);
+                return;
+            }
+        }
+        
+        throw new ProductNotFoundException("Product not found in cart");
+    }
+    
+    public double calculateTotalPrice() {
+        double total = 0;
+        for (CartItem item : cartItems) {
+            total += item.getTotalPrice();
+        }
+        return total;
+    }
+    
+    public List<CartItem> getCartItems() {
+        return new ArrayList<>(cartItems);
+    }
+    
+    public void clearCart() {
+        cartItems.clear();
+    }
+}
